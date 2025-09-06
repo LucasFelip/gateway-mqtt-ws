@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <title>MQTT WS Viewer (gateway)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Lib MQTT over WebSocket -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <!-- Config isolada -->
+    <script src="./gateway-config.js"></script>
+    <style>
+        :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+        body { margin: 16px; color: #0f172a; background: #0b1220; }
+        .card { background:#0f172a; border:1px solid #233; border-radius:12px; padding:16px; max-width:1080px; margin:auto; color:#e2e8f0; }
+        .row { display:flex; gap:12px; flex-wrap: wrap; align-items:center; }
+        .badge { padding:4px 8px; border-radius:999px; font-size:12px; border:1px solid #334155; }
+        .ok{ background:#065f46; } .warn{ background:#7c2d12; } .muted{opacity:.8}
+        input,button { padding:8px 10px; border-radius:8px; border:1px solid #334155; background:#0b1220; color:#e2e8f0; }
+        button { cursor:pointer; }
+        table{ width:100%; border-collapse:collapse; margin-top:12px; }
+        th,td{ border-bottom:1px solid #1f2937; padding:8px; vertical-align:top; font-size:13px; }
+        th{ text-align:left; color:#93c5fd; }
+        code{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+        .topic{ color:#fbbf24; }
+        .ts{ color:#93c5fd; white-space:nowrap; }
+        .payload{ color:#e5e7eb; }
+        .controls { margin-top: 8px; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2 style="margin-top:0">MQTT WebSocket Viewer (Gateway)</h2>
+
+    <div class="row">
+        <div id="status" class="badge warn">desconectado</div>
+        <div class="badge muted">URL: <code id="urlBadge"></code></div>
+        <div class="badge muted">Filtro: <code id="filterBadge"></code></div>
+    </div>
+
+    <div class="controls row" style="margin-top:10px">
+        <input id="topicInput" placeholder="tópico p/ assinar (ex.: sensor/#)" size="28" />
+        <button id="btnSubscribe">Assinar</button>
+        <button id="btnClear">Limpar lista</button>
+    </div>
+
+    <table id="msgTable">
+        <thead>
+        <tr>
+            <th style="width:170px">Horário</th>
+            <th>Tópico</th>
+            <th>Payload</th>
+        </tr>
+        </thead>
+        <tbody id="msgBody"></tbody>
+    </table>
+</div>
+
+<script>
+    (function () {
+        const cfg = window.GATEWAY_CONFIG || {};
+        const url = cfg.url || 'ws://localhost:8083/';
+        const topicFilterDefault = cfg.topicFilter || '#';
+
+        // status UI
+        const statusEl = document.getElementById('status');
+        const urlBadge = document.getElementById('urlBadge');
+        const filterBadge = document.getElementById('filterBadge');
+        const msgBody = document.getElementById('msgBody');
+        const topicInput = document.getElementById('topicInput');
+        const btnSub = document.getElementById('btnSubscribe');
+        const btnClear = document.getElementById('btnClear');
+
+        urlBadge.textContent = url;
+        filterBadge.textContent = topicFilterDefault;
+        topicInput.value = topicFilterDefault;
+
+        // conecta ao gateway
+        const client = mqtt.connect(url, {
+            clientId: (cfg.clientIdPrefix || 'web_') + Math.random().toString(16).slice(2),
+            username: cfg.username || undefined,
+            password: cfg.password || undefined,
+            keepalive: cfg.keepalive ?? 60,
+            reconnectPeriod: cfg.reconnectPeriod ?? 2000,
+            protocolVersion: cfg.protocolVersion ?? 4, // 3.1.1
+        });
+
+        const setStatus = (ok, txt) => {
+            statusEl.className = 'badge ' + (ok ? 'ok' : 'warn');
+            statusEl.textContent = txt;
+        };
+
+        client.on('connect', () => {
+            setStatus(true, 'conectado');
+            client.subscribe(topicFilterDefault, (err) => {
+                if (!err) filterBadge.textContent = topicFilterDefault;
+            });
+        });
+
+        client.on('reconnect', () => setStatus(false, 'reconectando...'));
+        client.on('close', () => setStatus(false, 'desconectado'));
+        client.on('error', (e) => setStatus(false, 'erro: ' + (e?.message || e)));
+
+        // renderizador
+        const MAX_ROWS = 500; // limite simples p/ evitar DOM gigante
+        function asTime(ts = Date.now()) {
+            const d = new Date(ts);
+            const pad = (n) => n.toString().padStart(2,'0');
+            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
+                + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.`
+                + `${d.getMilliseconds().toString().padStart(3,'0')}`;
+        }
+        function prettyPayload(buf) {
+            const s = buf.toString();
+            try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
+        }
+        function addRow(topic, payloadBuf) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+          <td class="ts">${asTime()}</td>
+          <td class="topic"><code>${escapeHtml(topic)}</code></td>
+          <td class="payload"><pre style="margin:0;white-space:pre-wrap"><code>${escapeHtml(prettyPayload(payloadBuf))}</code></pre></td>
+        `;
+            msgBody.prepend(tr);
+            while (msgBody.rows && msgBody.rows.length > MAX_ROWS) {
+                msgBody.deleteRow(msgBody.rows.length - 1);
+            }
+        }
+        function escapeHtml(s) {
+            return String(s)
+                .replaceAll('&','&amp;')
+                .replaceAll('<','&lt;')
+                .replaceAll('>','&gt;')
+                .replaceAll('"','&quot;')
+                .replaceAll("'",'&#39;');
+        }
+
+        client.on('message', (topic, payload) => addRow(topic, payload));
+
+        // ações
+        btnSub.addEventListener('click', () => {
+            const t = topicInput.value?.trim();
+            if (!t) return;
+            client.subscribe(t, (err) => {
+                if (!err) { filterBadge.textContent = t; }
+            });
+        });
+        btnClear.addEventListener('click', () => { msgBody.innerHTML = ''; });
+    })();
+</script>
+</body>
+</html>

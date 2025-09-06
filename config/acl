@@ -1,0 +1,5 @@
+# Regras de ACL (aplicam-se a todos via 'pattern')
+# Permite APENAS leitura (subscribe) em qualquer tópico.
+pattern read #
+
+# (sem regras 'write' ou 'readwrite') => publish será negado

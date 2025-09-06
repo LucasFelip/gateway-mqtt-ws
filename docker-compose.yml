@@ -1,0 +1,13 @@
+services:
+  mosquitto-ws-gateway:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto-ws-gateway
+    ports:
+      - "8083:8083"             # WebSocket exposto para o front/app
+      # (opcional) - "1884:1884"  # MQTT TCP local, se quiser testar via TCP
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/acl:/mosquitto/config/acl:ro
+      - ./data:/mosquitto/data
+      - ./log:/mosquitto/log
+    restart: unless-stopped
